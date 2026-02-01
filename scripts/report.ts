@@ -21,10 +21,11 @@ import { type Address } from 'viem';
 const WELL_ADDRESS = '0xA88594D404727625A9437C3f886C7643872296AE' as Address;
 const MORPHO_ADDRESS = '0xBAa5CC21fd487B8Fcc2F632f3F4E8D37262a0842' as Address;
 
-// Estimated APRs for reward tokens (fallback if API unavailable)
+// Estimated APRs for reward tokens (from Merkl, can vary)
+// Check https://api.merkl.xyz/v4/opportunities?chainId=8453 for current rates
 const REWARD_APRS = {
-  WELL: 0.02,    // ~2% APR in WELL rewards
-  MORPHO: 0.015, // ~1.5% APR in MORPHO rewards
+  WELL: 0.003,   // ~0.3% APR in WELL rewards
+  MORPHO: 0.003, // ~0.3% APR in MORPHO rewards
 };
 
 interface ReportData {
