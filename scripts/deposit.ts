@@ -20,6 +20,7 @@ import {
   simulateAndWrite,
   logTransaction,
   handleError,
+  sleep,
 } from './config.js';
 
 async function main() {
@@ -135,7 +136,11 @@ async function main() {
         amount: depositAmount.toString(),
       });
       
-      console.log('   ✅ Approved!\n');
+      console.log('   ✅ Approved!');
+      
+      // Wait for RPC state to sync before simulation
+      await sleep(1000);
+      console.log('');
     } catch (err) {
       handleError(err, 'Approve failed');
     }
