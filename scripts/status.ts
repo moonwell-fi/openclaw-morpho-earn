@@ -12,6 +12,8 @@ import {
   VAULT_ABI,
   ERC20_ABI,
   formatUSDC,
+  fetchVaultAPY,
+  handleError,
 } from './config.js';
 
 async function main() {
@@ -31,6 +33,7 @@ async function main() {
     totalSupply,
     vaultName,
     ethBalance,
+    vaultAPY,
   ] = await Promise.all([
     publicClient.readContract({
       address: USDC_ADDRESS,
@@ -60,6 +63,7 @@ async function main() {
       functionName: 'name',
     }),
     publicClient.getBalance({ address: account.address }),
+    fetchVaultAPY(),
   ]);
   
   // Calculate position value if user has shares
@@ -78,8 +82,6 @@ async function main() {
     ? (totalAssets * BigInt(1e18)) / totalSupply
     : BigInt(1e18);
   
-  // Estimate APY based on share price appreciation (simplified)
-  // In practice, you'd fetch this from Morpho API for accurate APY
   const sharePriceFloat = Number(sharePrice) / 1e18;
   
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -102,45 +104,18 @@ async function main() {
   console.log(`Total TVL:         ${formatUSDC(totalAssets)} USDC`);
   console.log(`Total shares:      ${formatUSDC(totalSupply)} mwUSDC`);
   
-  // Fetch current APY from Morpho API
-  try {
-    const response = await fetch(
-      'https://blue-api.morpho.org/graphql',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: `{
-            vaultByAddress(address: "${VAULT_ADDRESS.toLowerCase()}", chainId: 8453) {
-              state {
-                netApy
-                totalAssets
-              }
-            }
-          }`,
-        }),
-      }
-    );
-    
-    const data = await response.json() as {
-      data?: {
-        vaultByAddress?: {
-          state?: {
-            netApy?: number;
-          };
-        };
-      };
-    };
-    
-    const netApy = data?.data?.vaultByAddress?.state?.netApy;
-    if (netApy !== undefined) {
-      console.log(`Current APY:       ${(netApy * 100).toFixed(2)}%`);
-    }
-  } catch {
-    console.log(`Current APY:       (fetch from app.morpho.org)`);
+  if (vaultAPY > 0) {
+    console.log(`Current APY:       ${vaultAPY.toFixed(2)}%`);
+  } else {
+    console.log(`Current APY:       (see app.morpho.org)`);
   }
   
   console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  
+  // Gas warning
+  if (Number(ethBalance) < 1e14) {
+    console.log('\n⚠️  Warning: Low ETH balance for gas. Add ETH to continue transacting.');
+  }
   
   if (vaultShares === 0n && usdcBalance > 0n) {
     console.log('\n💡 You have USDC available. Run deposit.ts to earn yield!');
@@ -149,7 +124,4 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('❌ Error:', err.message);
-  process.exit(1);
-});
+main().catch((err) => handleError(err, 'Status check failed'));

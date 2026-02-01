@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 /**
  * Generate a beautiful status report for chat surfaces
- * Usage: npx tsx report.ts [--format telegram|discord|plain]
+ * Usage: npx tsx report.ts [--json|--plain]
  */
 
 import {
@@ -12,14 +12,16 @@ import {
   VAULT_ABI,
   ERC20_ABI,
   formatUSDC,
+  fetchVaultAPY,
+  rateLimitedFetch,
+  handleError,
 } from './config.js';
-import { type Address, formatUnits } from 'viem';
+import { type Address } from 'viem';
 
 const WELL_ADDRESS = '0xA88594D404727625A9437C3f886C7643872296AE' as Address;
 const MORPHO_ADDRESS = '0xBAa5CC21fd487B8Fcc2F632f3F4E8D37262a0842' as Address;
-const BASE_CHAIN_ID = 8453;
 
-// Estimated APRs for reward tokens (update periodically)
+// Estimated APRs for reward tokens (fallback if API unavailable)
 const REWARD_APRS = {
   WELL: 0.02,    // ~2% APR in WELL rewards
   MORPHO: 0.015, // ~1.5% APR in MORPHO rewards
@@ -36,23 +38,26 @@ interface ReportData {
   morphoValueUSD: number;
   totalRewardsUSD: number;
   ethBalance: number;
-  lastCompound?: string;
-  nextCompoundEstimate?: string;
 }
 
 async function getTokenPrice(symbol: string): Promise<number> {
-  // Simple price fetch from CoinGecko
   const ids: Record<string, string> = {
     WELL: 'moonwell',
     MORPHO: 'morpho',
   };
   
+  const id = ids[symbol];
+  if (!id) return 0;
+  
   try {
-    const res = await fetch(
-      `https://api.coingecko.com/api/v3/simple/price?ids=${ids[symbol]}&vs_currencies=usd`
+    const res = await rateLimitedFetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`
     );
-    const data = await res.json();
-    return data[ids[symbol]]?.usd || 0;
+    
+    if (!res.ok) return 0;
+    
+    const data = await res.json() as Record<string, { usd?: number }>;
+    return data[id]?.usd ?? 0;
   } catch {
     return 0;
   }
@@ -72,6 +77,7 @@ async function gatherReportData(): Promise<ReportData> {
     ethBalance,
     wellPrice,
     morphoPrice,
+    vaultAPY,
   ] = await Promise.all([
     publicClient.readContract({
       address: VAULT_ADDRESS,
@@ -104,6 +110,7 @@ async function gatherReportData(): Promise<ReportData> {
     publicClient.getBalance({ address: account.address }),
     getTokenPrice('WELL'),
     getTokenPrice('MORPHO'),
+    fetchVaultAPY(),
   ]);
   
   // Calculate position value
@@ -115,16 +122,16 @@ async function gatherReportData(): Promise<ReportData> {
   const wellBal = Number(wellBalance) / 1e18;
   const morphoBal = Number(morphoBalance) / 1e18;
   
-  // Base APY (from vault)
-  const vaultAPY = 4.09; // TODO: fetch dynamically from API
+  // Use fetched APY or fallback
+  const baseAPY = vaultAPY > 0 ? vaultAPY : 4.09;
   
   // Total APY including rewards
-  const totalAPY = vaultAPY + (REWARD_APRS.WELL * 100) + (REWARD_APRS.MORPHO * 100);
+  const totalAPY = baseAPY + (REWARD_APRS.WELL * 100) + (REWARD_APRS.MORPHO * 100);
   
   return {
     wallet: account.address,
     positionUSDC,
-    vaultAPY,
+    vaultAPY: baseAPY,
     totalAPY,
     wellBalance: wellBal,
     morphoBalance: morphoBal,
@@ -220,7 +227,4 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('Error generating report:', err.message);
-  process.exit(1);
-});
+main().catch((err) => handleError(err, 'Report generation failed'));

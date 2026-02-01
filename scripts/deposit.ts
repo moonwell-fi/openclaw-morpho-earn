@@ -14,6 +14,12 @@ import {
   ERC20_ABI,
   formatUSDC,
   parseUSDC,
+  isValidUSDCAmount,
+  verifyContracts,
+  waitForTransaction,
+  simulateAndWrite,
+  logTransaction,
+  handleError,
 } from './config.js';
 
 async function main() {
@@ -26,6 +32,14 @@ async function main() {
   }
   
   const amountArg = args[0];
+  
+  // Validate amount format
+  if (!isValidUSDCAmount(amountArg)) {
+    console.error('❌ Invalid amount format');
+    console.error('   Use a number like: 100, 100.50, 1,000.00');
+    process.exit(1);
+  }
+  
   const depositAmount = parseUSDC(amountArg);
   
   if (depositAmount <= 0n) {
@@ -39,6 +53,15 @@ async function main() {
   console.log('🌜🌛 Moonwell Flagship USDC Vault — Deposit\n');
   console.log(`Wallet: ${account.address}`);
   console.log(`Amount: ${formatUSDC(depositAmount)} USDC\n`);
+  
+  // Verify contracts before proceeding
+  console.log('🔐 Verifying contracts...');
+  try {
+    await verifyContracts(publicClient);
+    console.log('   ✅ Contracts verified\n');
+  } catch (err) {
+    handleError(err, 'Contract verification failed');
+  }
   
   // Check USDC balance
   const usdcBalance = await publicClient.readContract({
@@ -92,18 +115,30 @@ async function main() {
   if (currentAllowance < depositAmount) {
     console.log('📝 Step 1/2: Approving USDC spend...');
     
-    const approveHash = await walletClient.writeContract({
-      address: USDC_ADDRESS,
-      abi: ERC20_ABI,
-      functionName: 'approve',
-      args: [VAULT_ADDRESS, depositAmount],
-    });
-    
-    console.log(`   Tx: ${approveHash}`);
-    console.log('   Waiting for confirmation...');
-    
-    await publicClient.waitForTransactionReceipt({ hash: approveHash });
-    console.log('   ✅ Approved!\n');
+    try {
+      const approveHash = await simulateAndWrite(publicClient, walletClient, {
+        address: USDC_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [VAULT_ADDRESS, depositAmount],
+        account,
+      });
+      
+      console.log(`   Tx: ${approveHash}`);
+      console.log('   Waiting for confirmation...');
+      
+      await waitForTransaction(publicClient, approveHash);
+      
+      logTransaction('approve', approveHash, {
+        token: 'USDC',
+        spender: VAULT_ADDRESS,
+        amount: depositAmount.toString(),
+      });
+      
+      console.log('   ✅ Approved!\n');
+    } catch (err) {
+      handleError(err, 'Approve failed');
+    }
   } else {
     console.log('📝 Step 1/2: USDC already approved ✅\n');
   }
@@ -111,50 +146,57 @@ async function main() {
   // Step 2: Deposit
   console.log('📝 Step 2/2: Depositing into vault...');
   
-  const depositHash = await walletClient.writeContract({
-    address: VAULT_ADDRESS,
-    abi: VAULT_ABI,
-    functionName: 'deposit',
-    args: [depositAmount, account.address],
-  });
-  
-  console.log(`   Tx: ${depositHash}`);
-  console.log('   Waiting for confirmation...');
-  
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: depositHash });
-  
-  if (receipt.status === 'success') {
-    console.log('   ✅ Deposit successful!\n');
-    
-    // Get updated position
-    const newShares = await publicClient.readContract({
+  try {
+    const depositHash = await simulateAndWrite(publicClient, walletClient, {
       address: VAULT_ADDRESS,
       abi: VAULT_ABI,
-      functionName: 'balanceOf',
-      args: [account.address],
+      functionName: 'deposit',
+      args: [depositAmount, account.address],
+      account,
     });
     
-    const positionValue = await publicClient.readContract({
-      address: VAULT_ADDRESS,
-      abi: VAULT_ABI,
-      functionName: 'convertToAssets',
-      args: [newShares],
-    });
+    console.log(`   Tx: ${depositHash}`);
+    console.log('   Waiting for confirmation...');
     
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('🎉 Deposit Complete!');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`Total shares:      ${formatUSDC(newShares)} mwUSDC`);
-    console.log(`Position value:    ${formatUSDC(positionValue)} USDC`);
-    console.log(`View on BaseScan:  https://basescan.org/tx/${depositHash}`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  } else {
-    console.error('   ❌ Transaction failed');
-    process.exit(1);
+    const receipt = await waitForTransaction(publicClient, depositHash);
+    
+    if (receipt.status === 'success') {
+      console.log('   ✅ Deposit successful!\n');
+      
+      // Get updated position
+      const newShares = await publicClient.readContract({
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: 'balanceOf',
+        args: [account.address],
+      });
+      
+      const positionValue = await publicClient.readContract({
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: 'convertToAssets',
+        args: [newShares],
+      });
+      
+      logTransaction('deposit', depositHash, {
+        amount: depositAmount.toString(),
+        shares: newShares.toString(),
+        positionValue: positionValue.toString(),
+      });
+      
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🎉 Deposit Complete!');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log(`Total shares:      ${formatUSDC(newShares)} mwUSDC`);
+      console.log(`Position value:    ${formatUSDC(positionValue)} USDC`);
+      console.log(`View on BaseScan:  https://basescan.org/tx/${depositHash}`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    } else {
+      handleError(new Error('Transaction reverted'), 'Deposit failed');
+    }
+  } catch (err) {
+    handleError(err, 'Deposit failed');
   }
 }
 
-main().catch((err) => {
-  console.error('❌ Error:', err.message);
-  process.exit(1);
-});
+main().catch((err) => handleError(err, 'Deposit failed'));

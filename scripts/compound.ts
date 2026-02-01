@@ -17,6 +17,14 @@ import {
   VAULT_ABI,
   ERC20_ABI,
   formatUSDC,
+  verifyContracts,
+  waitForTransaction,
+  simulateAndWrite,
+  logTransaction,
+  handleError,
+  rateLimitedFetch,
+  sleep,
+  TX_TIMEOUT_MS,
 } from './config.js';
 import { type Address, type Hex, formatUnits } from 'viem';
 
@@ -73,25 +81,53 @@ interface OdosAssembleResponse {
   outputTokens: Array<{ amount: string }>;
 }
 
+// Merkl API response types for validation
+interface MerklRewardToken {
+  address: string;
+  symbol: string;
+  decimals: number;
+}
+
+interface MerklRewardEntry {
+  token: MerklRewardToken;
+  amount: string;
+  claimed: string;
+  proofs: string[];
+}
+
+interface MerklChainRewards {
+  chain: { id: number };
+  rewards: MerklRewardEntry[];
+}
+
+function validateMerklResponse(data: unknown): data is MerklChainRewards[] {
+  if (!Array.isArray(data)) return false;
+  
+  for (const item of data) {
+    if (typeof item !== 'object' || item === null) return false;
+    if (!('chain' in item) || !('rewards' in item)) return false;
+    if (typeof item.chain?.id !== 'number') return false;
+    if (!Array.isArray(item.rewards)) return false;
+  }
+  
+  return true;
+}
+
 async function fetchRewards(userAddress: string): Promise<TokenReward[]> {
   const url = `https://api.merkl.xyz/v4/users/${userAddress}/rewards?chainId=${BASE_CHAIN_ID}`;
   
-  const response = await fetch(url);
+  const response = await rateLimitedFetch(url);
   if (!response.ok) {
     throw new Error(`Merkl API error: ${response.status}`);
   }
   
-  interface MerklReward {
-    chain: { id: number };
-    rewards: Array<{
-      token: { address: string; symbol: string; decimals: number };
-      amount: string;
-      claimed: string;
-      proofs: string[];
-    }>;
+  const data = await response.json();
+  
+  // Validate response structure
+  if (!validateMerklResponse(data)) {
+    throw new Error('Invalid Merkl API response structure');
   }
   
-  const data = await response.json() as MerklReward[];
   const rewards: TokenReward[] = [];
   
   for (const chainRewards of data) {
@@ -125,7 +161,7 @@ async function getOdosQuote(
   tokenOut: Address,
   userAddress: Address
 ): Promise<OdosQuoteResponse | null> {
-  const response = await fetch('https://api.odos.xyz/sor/quote/v2', {
+  const response = await rateLimitedFetch('https://api.odos.xyz/sor/quote/v2', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -142,14 +178,22 @@ async function getOdosQuote(
     return null;
   }
   
-  return response.json();
+  const data = await response.json() as OdosQuoteResponse;
+  
+  // Basic validation
+  if (!data.pathId || !Array.isArray(data.outAmounts)) {
+    console.log(`  ⚠️ Invalid Odos quote response`);
+    return null;
+  }
+  
+  return data;
 }
 
 async function assembleOdosTransaction(
   pathId: string,
   userAddress: Address
 ): Promise<OdosAssembleResponse | null> {
-  const response = await fetch('https://api.odos.xyz/sor/assemble', {
+  const response = await rateLimitedFetch('https://api.odos.xyz/sor/assemble', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -164,7 +208,15 @@ async function assembleOdosTransaction(
     return null;
   }
   
-  return response.json();
+  const data = await response.json() as OdosAssembleResponse;
+  
+  // Validate response
+  if (!data.transaction?.to || !data.transaction?.data) {
+    console.log(`  ⚠️ Invalid Odos assemble response`);
+    return null;
+  }
+  
+  return data;
 }
 
 async function getTokenBalance(
@@ -188,6 +240,15 @@ async function main() {
   console.log(`Wallet: ${account.address}`);
   console.log(`Vault:  ${VAULT_ADDRESS}\n`);
   
+  // Verify contracts before proceeding
+  console.log('🔐 Verifying contracts...');
+  try {
+    await verifyContracts(publicClient);
+    console.log('   ✅ Contracts verified\n');
+  } catch (err) {
+    handleError(err, 'Contract verification failed');
+  }
+  
   // Check ETH for gas
   const ethBalance = await publicClient.getBalance({ address: account.address });
   if (ethBalance < BigInt(5e14)) { // 0.0005 ETH minimum for multiple txs
@@ -202,7 +263,13 @@ async function main() {
   console.log('📋 Step 1: Check & Claim Rewards');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
   
-  const rewards = await fetchRewards(account.address);
+  let rewards: TokenReward[] = [];
+  try {
+    rewards = await fetchRewards(account.address);
+  } catch (err) {
+    console.warn(`⚠️ Could not fetch Merkl rewards: ${err instanceof Error ? err.message : String(err)}`);
+    console.log('   Continuing with wallet token balances...\n');
+  }
   
   if (rewards.length > 0) {
     console.log('Claimable rewards found:');
@@ -224,15 +291,27 @@ async function main() {
     }
     
     console.log('\nClaiming...');
-    const claimHash = await walletClient.writeContract({
-      address: MERKL_DISTRIBUTOR,
-      abi: MERKL_ABI,
-      functionName: 'claim',
-      args: [users, tokens, amounts, proofs],
-    });
-    
-    await publicClient.waitForTransactionReceipt({ hash: claimHash });
-    console.log('✅ Rewards claimed!\n');
+    try {
+      const claimHash = await simulateAndWrite(publicClient, walletClient, {
+        address: MERKL_DISTRIBUTOR,
+        abi: MERKL_ABI,
+        functionName: 'claim',
+        args: [users, tokens, amounts, proofs],
+        account,
+      });
+      
+      await waitForTransaction(publicClient, claimHash);
+      
+      logTransaction('claim', claimHash, {
+        tokens: rewards.map(r => r.symbol),
+        amounts: rewards.map(r => formatUnits(r.claimable, r.decimals)),
+      });
+      
+      console.log('✅ Rewards claimed!\n');
+    } catch (err) {
+      console.warn(`⚠️ Claim failed: ${err instanceof Error ? err.message : String(err)}`);
+      console.log('   Continuing with existing wallet balances...\n');
+    }
   } else {
     console.log('No pending rewards to claim.\n');
   }
@@ -259,7 +338,7 @@ async function main() {
       const quote = await getOdosQuote(token.address, balance, USDC_ADDRESS, account.address);
       
       if (!quote) {
-        console.log(`  ⚠️ Could not get quote, skipping ${token.symbol}`);
+        console.log(`  ⚠️ Could not get quote, skipping ${token.symbol}\n`);
         continue;
       }
       
@@ -268,7 +347,7 @@ async function main() {
       
       // Skip if output is dust (< $0.01)
       if (expectedOut < 10000n) { // 0.01 USDC
-        console.log(`  ⚠️ Output too small, skipping swap`);
+        console.log(`  ⚠️ Output too small (<$0.01), skipping swap\n`);
         continue;
       }
       
@@ -282,22 +361,38 @@ async function main() {
       
       if (allowance < balance) {
         console.log(`  Approving ${token.symbol} for Odos...`);
-        const approveHash = await walletClient.writeContract({
-          address: token.address,
-          abi: ERC20_ABI,
-          functionName: 'approve',
-          args: [ODOS_ROUTER, balance],
-        });
-        await publicClient.waitForTransactionReceipt({ hash: approveHash });
-        console.log(`  ✅ Approved`);
+        try {
+          const approveHash = await simulateAndWrite(publicClient, walletClient, {
+            address: token.address,
+            abi: ERC20_ABI,
+            functionName: 'approve',
+            args: [ODOS_ROUTER, balance],
+            account,
+          });
+          await waitForTransaction(publicClient, approveHash);
+          
+          logTransaction('approve', approveHash, {
+            token: token.symbol,
+            spender: ODOS_ROUTER,
+            amount: balance.toString(),
+          });
+          
+          console.log(`  ✅ Approved`);
+        } catch (err) {
+          console.log(`  ❌ Approve failed: ${err instanceof Error ? err.message : String(err)}\n`);
+          continue;
+        }
       }
+      
+      // Small delay to ensure state is synced
+      await sleep(500);
       
       // Assemble and execute swap
       console.log(`  Assembling swap transaction...`);
       const assembled = await assembleOdosTransaction(quote.pathId, account.address);
       
       if (!assembled) {
-        console.log(`  ⚠️ Could not assemble transaction, skipping ${token.symbol}`);
+        console.log(`  ⚠️ Could not assemble transaction, skipping ${token.symbol}\n`);
         continue;
       }
       
@@ -306,19 +401,30 @@ async function main() {
       const gasEstimate = BigInt(assembled.transaction.gas);
       const gasWithBuffer = gasEstimate + (gasEstimate * 50n / 100n);
       
-      const swapHash = await walletClient.sendTransaction({
-        to: assembled.transaction.to as Address,
-        data: assembled.transaction.data as Hex,
-        value: BigInt(assembled.transaction.value),
-        gas: gasWithBuffer,
-      });
-      
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: swapHash });
-      
-      if (receipt.status === 'success') {
-        console.log(`  ✅ Swapped! Tx: ${swapHash}\n`);
-      } else {
-        console.log(`  ❌ Swap failed\n`);
+      try {
+        const swapHash = await walletClient.sendTransaction({
+          to: assembled.transaction.to as Address,
+          data: assembled.transaction.data as Hex,
+          value: BigInt(assembled.transaction.value),
+          gas: gasWithBuffer,
+        });
+        
+        const receipt = await waitForTransaction(publicClient, swapHash);
+        
+        if (receipt.status === 'success') {
+          logTransaction('swap', swapHash, {
+            tokenIn: token.symbol,
+            amountIn: formatUnits(balance, token.decimals),
+            tokenOut: 'USDC',
+            expectedOut: formatUSDC(expectedOut),
+          });
+          
+          console.log(`  ✅ Swapped! Tx: ${swapHash}\n`);
+        } else {
+          console.log(`  ❌ Swap reverted\n`);
+        }
+      } catch (err) {
+        console.log(`  ❌ Swap failed: ${err instanceof Error ? err.message : String(err)}\n`);
       }
     }
   }
@@ -348,59 +454,78 @@ async function main() {
   
   if (vaultAllowance < usdcBalance) {
     console.log('Approving USDC for vault...');
-    const approveHash = await walletClient.writeContract({
-      address: USDC_ADDRESS,
-      abi: ERC20_ABI,
-      functionName: 'approve',
-      args: [VAULT_ADDRESS, usdcBalance],
-    });
-    await publicClient.waitForTransactionReceipt({ hash: approveHash });
-    console.log('✅ Approved!\n');
+    try {
+      const approveHash = await simulateAndWrite(publicClient, walletClient, {
+        address: USDC_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [VAULT_ADDRESS, usdcBalance],
+        account,
+      });
+      await waitForTransaction(publicClient, approveHash);
+      
+      logTransaction('approve', approveHash, {
+        token: 'USDC',
+        spender: VAULT_ADDRESS,
+        amount: usdcBalance.toString(),
+      });
+      
+      console.log('✅ Approved!\n');
+    } catch (err) {
+      handleError(err, 'USDC approve failed');
+    }
   }
   
   // Deposit into vault
   console.log(`Depositing ${formatUSDC(usdcBalance)} USDC...`);
   
-  const depositHash = await walletClient.writeContract({
-    address: VAULT_ADDRESS,
-    abi: VAULT_ABI,
-    functionName: 'deposit',
-    args: [usdcBalance, account.address],
-  });
-  
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: depositHash });
-  
-  if (receipt.status === 'success') {
-    // Get new position
-    const newShares = await publicClient.readContract({
+  try {
+    const depositHash = await simulateAndWrite(publicClient, walletClient, {
       address: VAULT_ADDRESS,
       abi: VAULT_ABI,
-      functionName: 'balanceOf',
-      args: [account.address],
+      functionName: 'deposit',
+      args: [usdcBalance, account.address],
+      account,
     });
     
-    const positionValue = await publicClient.readContract({
-      address: VAULT_ADDRESS,
-      abi: VAULT_ABI,
-      functionName: 'convertToAssets',
-      args: [newShares],
-    });
+    const receipt = await waitForTransaction(publicClient, depositHash);
     
-    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('🎉 Auto-Compound Complete!');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`Deposited:         ${formatUSDC(usdcBalance)} USDC`);
-    console.log(`Total position:    ${formatUSDC(positionValue)} USDC`);
-    console.log(`Total shares:      ${formatUSDC(newShares)} mwUSDC`);
-    console.log(`View on BaseScan:  https://basescan.org/tx/${depositHash}`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  } else {
-    console.error('❌ Deposit failed');
-    process.exit(1);
+    if (receipt.status === 'success') {
+      // Get new position
+      const newShares = await publicClient.readContract({
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: 'balanceOf',
+        args: [account.address],
+      });
+      
+      const positionValue = await publicClient.readContract({
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: 'convertToAssets',
+        args: [newShares],
+      });
+      
+      logTransaction('compound', depositHash, {
+        deposited: usdcBalance.toString(),
+        totalShares: newShares.toString(),
+        positionValue: positionValue.toString(),
+      });
+      
+      console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🎉 Auto-Compound Complete!');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log(`Deposited:         ${formatUSDC(usdcBalance)} USDC`);
+      console.log(`Total position:    ${formatUSDC(positionValue)} USDC`);
+      console.log(`Total shares:      ${formatUSDC(newShares)} mwUSDC`);
+      console.log(`View on BaseScan:  https://basescan.org/tx/${depositHash}`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    } else {
+      handleError(new Error('Transaction reverted'), 'Deposit failed');
+    }
+  } catch (err) {
+    handleError(err, 'Deposit failed');
   }
 }
 
-main().catch((err) => {
-  console.error('❌ Error:', err.message);
-  process.exit(1);
-});
+main().catch((err) => handleError(err, 'Compound failed'));
