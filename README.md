@@ -8,7 +8,7 @@ The Moonwell Flagship USDC vault is **one of the safest places to earn yield on 
 
 ### 🏛️ Powers Coinbase's Borrow Products
 
-The Moonwell Flagship USDC vault **provides 80% of all USDC** that backs Coinbase's Bitcoin and Ethereum borrow products. When Coinbase users take out loans against their cbBTC or ETH, that liquidity comes from this vault. This institutional-grade integration speaks to the vault's reliability and security.
+The Moonwell Flagship USDC vault **provides over $20 million in liquidity** to Coinbase's Bitcoin and Ethereum borrow products. When Coinbase users take out loans against their cbBTC or ETH, that liquidity flows from this vault. This institutional-grade integration speaks to the vault's reliability and security.
 
 ### 🛡️ Conservative Risk Management
 
