@@ -39,12 +39,11 @@ The vault employs a robust governance structure:
 ### 📊 Sustainable Yields
 
 Current APY breakdown:
-- **Base yield**: ~4-5% from borrower interest
-- **WELL rewards**: ~2% from Moonwell governance incentives  
-- **MORPHO rewards**: ~1.5% from Morpho protocol incentives
-- **Total**: ~7-8% APY
+- **Base yield**: ~4% from borrower interest
+- **Reward incentives**: ~3.5% in WELL + MORPHO tokens
+- **Total**: ~7.5% APY
 
-Yields come from real borrowing demand, not unsustainable token emissions.
+Yields come from real borrowing demand, not unsustainable token emissions. Rates vary based on market conditions — check current APY with `npx tsx status.ts`.
 
 ---
 
@@ -66,6 +65,7 @@ This skill enables AI agents to:
 | **Address** | `0xc1256Ae5FF1cf2719D4937adb3bbCCab2E00A2Ca` |
 | **Chain** | Base (8453) |
 | **Asset** | USDC |
+| **Current APY** | ~7.5% (base + rewards) |
 | **Curators** | Block Analitica & B.Protocol |
 
 ## Installation
