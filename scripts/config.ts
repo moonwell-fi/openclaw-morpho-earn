@@ -523,3 +523,83 @@ export async function fetchVaultAPY(): Promise<number> {
     return 0; // Return 0 if fetch fails, don't crash
   }
 }
+
+/**
+ * Verify allowance is set by polling until confirmed
+ * This handles RPC state lag after approval transactions
+ */
+export async function verifyAllowance(
+  publicClient: PublicClient,
+  token: Address,
+  owner: Address,
+  spender: Address,
+  requiredAmount: bigint,
+  maxRetries: number = 10,
+  retryDelayMs: number = 500
+): Promise<boolean> {
+  for (let i = 0; i < maxRetries; i++) {
+    const allowance = await publicClient.readContract({
+      address: token,
+      abi: ERC20_ABI,
+      functionName: 'allowance',
+      args: [owner, spender],
+    });
+    
+    if (allowance >= requiredAmount) {
+      return true;
+    }
+    
+    if (i < maxRetries - 1) {
+      await sleep(retryDelayMs);
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Approve and verify - handles the full approval flow with state verification
+ */
+export async function approveAndVerify(
+  publicClient: PublicClient,
+  walletClient: WalletClient,
+  account: Account,
+  token: Address,
+  spender: Address,
+  amount: bigint,
+  tokenSymbol: string = 'token'
+): Promise<Hex> {
+  // Simulate and execute approval
+  const approveHash = await simulateAndWrite(publicClient, walletClient, {
+    address: token,
+    abi: ERC20_ABI,
+    functionName: 'approve',
+    args: [spender, amount],
+    account,
+  });
+  
+  // Wait for transaction confirmation
+  await waitForTransaction(publicClient, approveHash);
+  
+  // Log the transaction
+  logTransaction('approve', approveHash, {
+    token: tokenSymbol,
+    spender,
+    amount: amount.toString(),
+  });
+  
+  // Verify allowance is set by polling
+  const verified = await verifyAllowance(
+    publicClient,
+    token,
+    account.address,
+    spender,
+    amount
+  );
+  
+  if (!verified) {
+    throw new Error(`Allowance verification failed for ${tokenSymbol} after approval`);
+  }
+  
+  return approveHash;
+}

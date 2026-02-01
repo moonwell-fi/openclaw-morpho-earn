@@ -24,7 +24,8 @@ import {
   handleError,
   rateLimitedFetch,
   sleep,
-  TX_TIMEOUT_MS,
+  approveAndVerify,
+  verifyAllowance,
 } from './config.js';
 import { type Address, type Hex, formatUnits } from 'viem';
 
@@ -362,30 +363,21 @@ async function main() {
       if (allowance < balance) {
         console.log(`  Approving ${token.symbol} for Odos...`);
         try {
-          const approveHash = await simulateAndWrite(publicClient, walletClient, {
-            address: token.address,
-            abi: ERC20_ABI,
-            functionName: 'approve',
-            args: [ODOS_ROUTER, balance],
+          await approveAndVerify(
+            publicClient,
+            walletClient,
             account,
-          });
-          await waitForTransaction(publicClient, approveHash);
-          
-          logTransaction('approve', approveHash, {
-            token: token.symbol,
-            spender: ODOS_ROUTER,
-            amount: balance.toString(),
-          });
-          
-          console.log(`  ✅ Approved`);
+            token.address,
+            ODOS_ROUTER,
+            balance,
+            token.symbol
+          );
+          console.log(`  ✅ Approved and verified`);
         } catch (err) {
           console.log(`  ❌ Approve failed: ${err instanceof Error ? err.message : String(err)}\n`);
           continue;
         }
       }
-      
-      // Small delay to ensure state is synced
-      await sleep(500);
       
       // Assemble and execute swap
       console.log(`  Assembling swap transaction...`);
@@ -455,26 +447,16 @@ async function main() {
   if (vaultAllowance < usdcBalance) {
     console.log('Approving USDC for vault...');
     try {
-      const approveHash = await simulateAndWrite(publicClient, walletClient, {
-        address: USDC_ADDRESS,
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [VAULT_ADDRESS, usdcBalance],
+      await approveAndVerify(
+        publicClient,
+        walletClient,
         account,
-      });
-      await waitForTransaction(publicClient, approveHash);
-      
-      logTransaction('approve', approveHash, {
-        token: 'USDC',
-        spender: VAULT_ADDRESS,
-        amount: usdcBalance.toString(),
-      });
-      
-      console.log('✅ Approved!');
-      
-      // Wait for RPC state to sync before simulation
-      await sleep(1000);
-      console.log('');
+        USDC_ADDRESS,
+        VAULT_ADDRESS,
+        usdcBalance,
+        'USDC'
+      );
+      console.log('✅ Approved and verified!\n');
     } catch (err) {
       handleError(err, 'USDC approve failed');
     }

@@ -20,7 +20,7 @@ import {
   simulateAndWrite,
   logTransaction,
   handleError,
-  sleep,
+  approveAndVerify,
 } from './config.js';
 
 async function main() {
@@ -117,30 +117,17 @@ async function main() {
     console.log('📝 Step 1/2: Approving USDC spend...');
     
     try {
-      const approveHash = await simulateAndWrite(publicClient, walletClient, {
-        address: USDC_ADDRESS,
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [VAULT_ADDRESS, depositAmount],
+      const approveHash = await approveAndVerify(
+        publicClient,
+        walletClient,
         account,
-      });
-      
+        USDC_ADDRESS,
+        VAULT_ADDRESS,
+        depositAmount,
+        'USDC'
+      );
       console.log(`   Tx: ${approveHash}`);
-      console.log('   Waiting for confirmation...');
-      
-      await waitForTransaction(publicClient, approveHash);
-      
-      logTransaction('approve', approveHash, {
-        token: 'USDC',
-        spender: VAULT_ADDRESS,
-        amount: depositAmount.toString(),
-      });
-      
-      console.log('   ✅ Approved!');
-      
-      // Wait for RPC state to sync before simulation
-      await sleep(1000);
-      console.log('');
+      console.log('   ✅ Approved and verified!\n');
     } catch (err) {
       handleError(err, 'Approve failed');
     }
