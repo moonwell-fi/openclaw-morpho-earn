@@ -2,7 +2,53 @@
 
 A [Clawdbot](https://github.com/clawdbot/clawdbot) / [OpenClaw](https://openclaw.ai) skill for earning yield on USDC via the **Moonwell Flagship USDC vault** on [Morpho](https://morpho.org) (Base network).
 
-## What It Does
+## Why Moonwell Flagship USDC?
+
+The Moonwell Flagship USDC vault is **one of the safest places to earn yield on Base**. Here's why:
+
+### 🏛️ Powers Coinbase's Borrow Products
+
+The Moonwell Flagship USDC vault **provides 80% of all USDC** that backs Coinbase's Bitcoin and Ethereum borrow products. When Coinbase users take out loans against their cbBTC or ETH, that liquidity comes from this vault. This institutional-grade integration speaks to the vault's reliability and security.
+
+### 🛡️ Conservative Risk Management
+
+Unlike aggressive yield strategies, Moonwell vaults prioritize **capital preservation**:
+
+- **Blue-chip collateral only** — Loans are backed by established assets like ETH, cbETH, wstETH, and cbBTC
+- **Conservative LTV ratios** — Borrowers must maintain healthy collateral levels
+- **Isolated markets** — Risk is compartmentalized; issues in one market don't affect others
+- **No rehypothecation** — Your USDC isn't lent out recursively
+
+### 🔒 Multi-Layer Security
+
+The vault employs a robust governance structure:
+
+| Role | Entity | Responsibility |
+|------|--------|----------------|
+| **Owner** | Moonwell DAO | Sets high-level vault strategy |
+| **Curators** | [Block Analitica](https://blockanalitica.com/) & [B.Protocol](https://www.bprotocol.org/) | Define risk parameters, supply caps, market allocations |
+| **Guardian** | Moonwell Security Council | Oversight with veto power during timelock periods |
+
+### 🔬 Battle-Tested Infrastructure
+
+- **Morpho's codebase** — Under 650 lines of Solidity, fully immutable, extensively audited
+- **ERC-4626 compliant** — Standard vault interface ensures broad compatibility
+- **On-chain transparency** — All vault logic executes on-chain with full visibility
+- **No upgradeable proxies** — What you see is what you get
+
+### 📊 Sustainable Yields
+
+Current APY breakdown:
+- **Base yield**: ~4-5% from borrower interest
+- **WELL rewards**: ~2% from Moonwell governance incentives  
+- **MORPHO rewards**: ~1.5% from Morpho protocol incentives
+- **Total**: ~7-8% APY
+
+Yields come from real borrowing demand, not unsustainable token emissions.
+
+---
+
+## What This Skill Does
 
 This skill enables AI agents to:
 
@@ -20,7 +66,7 @@ This skill enables AI agents to:
 | **Address** | `0xc1256Ae5FF1cf2719D4937adb3bbCCab2E00A2Ca` |
 | **Chain** | Base (8453) |
 | **Asset** | USDC |
-| **Current APY** | ~4-5% base + ~3% in rewards |
+| **Curators** | Block Analitica & B.Protocol |
 
 ## Installation
 
@@ -76,6 +122,7 @@ npx tsx compound.ts
 | `rewards.ts` | Check claimable rewards |
 | `rewards.ts claim` | Claim rewards from Merkl |
 | `compound.ts` | Claim → Swap → Deposit (full auto-compound) |
+| `test-swap.ts [amount]` | Test swap flow (USDC → WELL + MORPHO) |
 
 ## Reports
 
@@ -124,7 +171,7 @@ Config files are stored in `~/.config/morpho-yield/`:
     "source": "file",
     "path": "~/.clawd/vault/morpho.key"
   },
-  "rpc": "https://rpc.moonwell.fi/main/evm/8453"
+  "rpc": "https://mainnet.base.org"
 }
 ```
 
@@ -160,10 +207,10 @@ The skill supports multiple wallet sources:
 
 ⚠️ **This skill manages real funds. Please review carefully:**
 
-- Private keys are loaded at runtime and never logged or written by scripts
-- All transactions show a preview before execution
+- Private keys are loaded at runtime and never logged
+- All transactions are simulated before execution
+- Contract addresses are verified on each run
 - The wallet should be a dedicated hot wallet with limited funds
-- Never store your main wallet's private key
 - Review all script code before use — this is open source for transparency
 - Gas (ETH) is required on Base for transactions
 
@@ -174,7 +221,7 @@ The skill supports multiple wallet sources:
 3. Keep the private key in a secure location (encrypted file or 1Password)
 4. Monitor the wallet's activity periodically
 
-## Rewards
+## How Rewards Work
 
 The Moonwell vault earns rewards beyond the base APY:
 
@@ -183,7 +230,7 @@ The Moonwell vault earns rewards beyond the base APY:
 
 Rewards are distributed via [Merkl](https://merkl.xyz) and update approximately every 8 hours. The `compound.ts` script handles:
 
-1. Claiming rewards from Merkl
+1. Claiming rewards from Merkl distributor
 2. Swapping tokens to USDC via [Odos](https://odos.xyz) aggregator
 3. Depositing USDC back into the vault
 
@@ -196,6 +243,7 @@ Rewards are distributed via [Merkl](https://merkl.xyz) and update approximately 
 ## Links
 
 - [Moonwell](https://moonwell.fi) — DeFi lending protocol
+- [Moonwell Docs](https://docs.moonwell.fi/moonwell/moonwell-overview/vaults) — Vault documentation
 - [Morpho](https://morpho.org) — Lending optimizer
 - [Vault on Morpho](https://app.morpho.org/vault?vault=0xc1256Ae5FF1cf2719D4937adb3bbCCab2E00A2Ca&network=base)
 - [Clawdbot](https://github.com/clawdbot/clawdbot) — AI agent framework
