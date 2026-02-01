@@ -26,6 +26,7 @@ import {
   sleep,
   approveAndVerify,
   verifyAllowance,
+  getFreshNonce,
 } from './config.js';
 import { type Address, type Hex, formatUnits } from 'viem';
 
@@ -393,12 +394,16 @@ async function main() {
       const gasEstimate = BigInt(assembled.transaction.gas);
       const gasWithBuffer = gasEstimate + (gasEstimate * 50n / 100n);
       
+      // Get fresh nonce to avoid stale cache issues
+      const nonce = await getFreshNonce(publicClient, account.address);
+      
       try {
         const swapHash = await walletClient.sendTransaction({
           to: assembled.transaction.to as Address,
           data: assembled.transaction.data as Hex,
           value: BigInt(assembled.transaction.value),
           gas: gasWithBuffer,
+          nonce,
         });
         
         const receipt = await waitForTransaction(publicClient, swapHash);

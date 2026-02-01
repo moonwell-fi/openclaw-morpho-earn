@@ -25,6 +25,7 @@ export const USDC_DECIMALS = 6;
 export const TX_TIMEOUT_MS = 120_000; // 2 minutes
 export const TX_CONFIRMATIONS = 1;
 export const API_RATE_LIMIT_MS = 300; // 300ms between API calls
+export const POST_TX_DELAY_MS = 1000; // Delay after tx confirmation to let RPC sync
 
 // ERC20 ABI (minimal)
 export const ERC20_ABI = [
@@ -386,7 +387,7 @@ export async function verifyContracts(publicClient: PublicClient): Promise<void>
 }
 
 /**
- * Wait for transaction with timeout
+ * Wait for transaction with timeout, then delay for RPC sync
  */
 export async function waitForTransaction(
   publicClient: PublicClient,
@@ -402,11 +403,30 @@ export async function waitForTransaction(
     setTimeout(() => reject(new Error(`Transaction confirmation timeout after ${timeoutMs / 1000}s`)), timeoutMs)
   );
   
-  return Promise.race([receiptPromise, timeoutPromise]);
+  const receipt = await Promise.race([receiptPromise, timeoutPromise]);
+  
+  // Small delay to let RPC state propagate (prevents nonce issues)
+  await sleep(POST_TX_DELAY_MS);
+  
+  return receipt;
+}
+
+/**
+ * Get fresh nonce from chain (bypasses any caching)
+ */
+export async function getFreshNonce(
+  publicClient: PublicClient,
+  address: Address
+): Promise<number> {
+  return publicClient.getTransactionCount({
+    address,
+    blockTag: 'pending', // Use pending to include mempool txs
+  });
 }
 
 /**
  * Simulate a contract call before execution
+ * @param gasMultiplier - Multiply estimated gas by this factor (default 1.5 for safety)
  */
 export async function simulateAndWrite<TAbi extends readonly unknown[]>(
   publicClient: PublicClient,
@@ -417,8 +437,11 @@ export async function simulateAndWrite<TAbi extends readonly unknown[]>(
     functionName: string;
     args: readonly unknown[];
     account: Account;
+    gasMultiplier?: number;
   }
 ): Promise<Hex> {
+  const gasMultiplier = params.gasMultiplier ?? 1.5;
+  
   // Simulate first
   try {
     await publicClient.simulateContract({
@@ -433,12 +456,28 @@ export async function simulateAndWrite<TAbi extends readonly unknown[]>(
     throw new Error(`Transaction simulation failed: ${message}`);
   }
   
-  // Execute if simulation passed
+  // Get fresh nonce to avoid stale cache issues
+  const nonce = await getFreshNonce(publicClient, params.account.address);
+  
+  // Estimate gas
+  const gasEstimate = await publicClient.estimateContractGas({
+    address: params.address,
+    abi: params.abi,
+    functionName: params.functionName,
+    args: params.args,
+    account: params.account,
+  } as any);
+  
+  const gasWithBuffer = BigInt(Math.ceil(Number(gasEstimate) * gasMultiplier));
+  
+  // Execute with gas buffer and explicit nonce
   return walletClient.writeContract({
     address: params.address,
     abi: params.abi,
     functionName: params.functionName,
     args: params.args,
+    gas: gasWithBuffer,
+    nonce,
   } as any);
 }
 
