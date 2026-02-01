@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Config (contains wallet paths)
+# The actual key files should NEVER be committed
+*.key
+
+# OS files
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+*.log
