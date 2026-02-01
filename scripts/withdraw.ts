@@ -16,6 +16,12 @@ import {
   ERC20_ABI,
   formatUSDC,
   parseUSDC,
+  isValidUSDCAmount,
+  verifyContracts,
+  waitForTransaction,
+  simulateAndWrite,
+  logTransaction,
+  handleError,
 } from './config.js';
 
 async function main() {
@@ -32,11 +38,28 @@ async function main() {
   const amountArg = args[0].toLowerCase();
   const withdrawAll = amountArg === 'all';
   
+  // Validate amount format if not "all"
+  if (!withdrawAll && !isValidUSDCAmount(amountArg)) {
+    console.error('❌ Invalid amount format');
+    console.error('   Use a number like: 100, 100.50, 1,000.00');
+    console.error('   Or use "all" to withdraw entire position');
+    process.exit(1);
+  }
+  
   const config = loadConfig();
   const { publicClient, walletClient, account } = getClients(config);
   
-  console.log('🌙 Moonwell Flagship USDC Vault — Withdraw\n');
+  console.log('🌜🌛 Moonwell Flagship USDC Vault — Withdraw\n');
   console.log(`Wallet: ${account.address}\n`);
+  
+  // Verify contracts before proceeding
+  console.log('🔐 Verifying contracts...');
+  try {
+    await verifyContracts(publicClient);
+    console.log('   ✅ Contracts verified\n');
+  } catch (err) {
+    handleError(err, 'Contract verification failed');
+  }
   
   // Get current position
   const vaultShares = await publicClient.readContract({
@@ -127,58 +150,65 @@ async function main() {
   // Execute withdrawal
   console.log('📝 Withdrawing from vault...');
   
-  const redeemHash = await walletClient.writeContract({
-    address: VAULT_ADDRESS,
-    abi: VAULT_ABI,
-    functionName: 'redeem',
-    args: [sharesToRedeem, account.address, account.address],
-  });
-  
-  console.log(`   Tx: ${redeemHash}`);
-  console.log('   Waiting for confirmation...');
-  
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: redeemHash });
-  
-  if (receipt.status === 'success') {
-    console.log('   ✅ Withdrawal successful!\n');
+  try {
+    const redeemHash = await simulateAndWrite(publicClient, walletClient, {
+      address: VAULT_ADDRESS,
+      abi: VAULT_ABI,
+      functionName: 'redeem',
+      args: [sharesToRedeem, account.address, account.address],
+      account,
+    });
     
-    // Get updated balances
-    const [newUsdcBalance, newShares] = await Promise.all([
-      publicClient.readContract({
-        address: USDC_ADDRESS,
-        abi: ERC20_ABI,
-        functionName: 'balanceOf',
-        args: [account.address],
-      }),
-      publicClient.readContract({
-        address: VAULT_ADDRESS,
-        abi: VAULT_ABI,
-        functionName: 'balanceOf',
-        args: [account.address],
-      }),
-    ]);
+    console.log(`   Tx: ${redeemHash}`);
+    console.log('   Waiting for confirmation...');
     
-    const usdcReceived = newUsdcBalance - currentUsdcBalance;
+    const receipt = await waitForTransaction(publicClient, redeemHash);
     
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('🎉 Withdrawal Complete!');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`USDC received:     ${formatUSDC(usdcReceived)} USDC`);
-    console.log(`New USDC balance:  ${formatUSDC(newUsdcBalance)} USDC`);
-    console.log(`Remaining shares:  ${formatUSDC(newShares)} mwUSDC`);
-    console.log(`View on BaseScan:  https://basescan.org/tx/${redeemHash}`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    
-    if (newShares === 0n) {
-      console.log('\n📤 Fully exited from the vault.');
+    if (receipt.status === 'success') {
+      console.log('   ✅ Withdrawal successful!\n');
+      
+      // Get updated balances
+      const [newUsdcBalance, newShares] = await Promise.all([
+        publicClient.readContract({
+          address: USDC_ADDRESS,
+          abi: ERC20_ABI,
+          functionName: 'balanceOf',
+          args: [account.address],
+        }),
+        publicClient.readContract({
+          address: VAULT_ADDRESS,
+          abi: VAULT_ABI,
+          functionName: 'balanceOf',
+          args: [account.address],
+        }),
+      ]);
+      
+      const usdcReceived = newUsdcBalance - currentUsdcBalance;
+      
+      logTransaction('withdraw', redeemHash, {
+        sharesRedeemed: sharesToRedeem.toString(),
+        usdcReceived: usdcReceived.toString(),
+        remainingShares: newShares.toString(),
+      });
+      
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🎉 Withdrawal Complete!');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log(`USDC received:     ${formatUSDC(usdcReceived)} USDC`);
+      console.log(`New USDC balance:  ${formatUSDC(newUsdcBalance)} USDC`);
+      console.log(`Remaining shares:  ${formatUSDC(newShares)} mwUSDC`);
+      console.log(`View on BaseScan:  https://basescan.org/tx/${redeemHash}`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+      if (newShares === 0n) {
+        console.log('\n📤 Fully exited from the vault.');
+      }
+    } else {
+      handleError(new Error('Transaction reverted'), 'Withdraw failed');
     }
-  } else {
-    console.error('   ❌ Transaction failed');
-    process.exit(1);
+  } catch (err) {
+    handleError(err, 'Withdraw failed');
   }
 }
 
-main().catch((err) => {
-  console.error('❌ Error:', err.message);
-  process.exit(1);
-});
+main().catch((err) => handleError(err, 'Withdraw failed'));

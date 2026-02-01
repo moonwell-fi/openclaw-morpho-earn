@@ -37,6 +37,46 @@ function ask(rl: readline.Interface, question: string): Promise<string> {
   });
 }
 
+/**
+ * Sanitize file path input to prevent injection
+ */
+function sanitizePath(input: string): string {
+  // Trim whitespace
+  let sanitized = input.trim();
+  
+  // Remove any shell injection characters
+  sanitized = sanitized.replace(/[;&|`$(){}[\]<>]/g, '');
+  
+  // Remove consecutive dots (path traversal)
+  sanitized = sanitized.replace(/\.{3,}/g, '..');
+  
+  // Validate it looks like a reasonable path
+  if (sanitized && !sanitized.match(/^[~\/]?[\w\-\.\/]+$/)) {
+    throw new Error('Invalid path format. Use alphanumeric characters, dots, dashes, and slashes.');
+  }
+  
+  return sanitized;
+}
+
+/**
+ * Sanitize environment variable name
+ */
+function sanitizeEnvVar(input: string): string {
+  const sanitized = input.trim().replace(/[^A-Z0-9_]/gi, '');
+  if (sanitized && !sanitized.match(/^[A-Z_][A-Z0-9_]*$/i)) {
+    throw new Error('Invalid environment variable name. Use letters, numbers, and underscores.');
+  }
+  return sanitized;
+}
+
+/**
+ * Sanitize 1Password item name
+ */
+function sanitizeItemName(input: string): string {
+  // Allow alphanumeric, spaces, dashes
+  return input.trim().replace(/[^\w\s\-]/g, '').slice(0, 100);
+}
+
 function getCompoundFrequency(depositSize: number): { checkFreq: string; description: string } {
   if (depositSize >= 10000) {
     return { checkFreq: 'daily', description: 'Daily (large position)' };
@@ -91,7 +131,7 @@ async function main() {
   let config: Config | null = null;
   if (fs.existsSync(CONFIG_PATH)) {
     console.log('✅ Existing wallet configuration found.\n');
-    config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) as Config;
   } else {
     console.log('No wallet configured yet.\n');
     
@@ -108,29 +148,41 @@ async function main() {
       rpc: 'https://rpc.moonwell.fi/main/evm/8453',
     };
     
-    if (walletChoice === '2') {
-      const envVar = await ask(rl, 'Environment variable name [MORPHO_PRIVATE_KEY]: ');
-      config.wallet = {
-        source: 'env',
-        env: envVar || 'MORPHO_PRIVATE_KEY',
-      };
-    } else if (walletChoice === '3') {
-      const item = await ask(rl, '1Password item name: ');
-      config.wallet = {
-        source: '1password',
-        item: item,
-      };
-    } else {
-      const keyPath = await ask(rl, 'Key file path [~/.clawd/vault/morpho.key]: ');
-      config.wallet = {
-        source: 'file',
-        path: keyPath || '~/.clawd/vault/morpho.key',
-      };
+    try {
+      if (walletChoice === '2') {
+        const envVar = await ask(rl, 'Environment variable name [MORPHO_PRIVATE_KEY]: ');
+        const sanitizedEnv = sanitizeEnvVar(envVar) || 'MORPHO_PRIVATE_KEY';
+        config.wallet = {
+          source: 'env',
+          env: sanitizedEnv,
+        };
+      } else if (walletChoice === '3') {
+        const item = await ask(rl, '1Password item name: ');
+        const sanitizedItem = sanitizeItemName(item);
+        if (!sanitizedItem) {
+          throw new Error('1Password item name is required');
+        }
+        config.wallet = {
+          source: '1password',
+          item: sanitizedItem,
+        };
+      } else {
+        const keyPath = await ask(rl, 'Key file path [~/.clawd/vault/morpho.key]: ');
+        const sanitizedPath = sanitizePath(keyPath) || '~/.clawd/vault/morpho.key';
+        config.wallet = {
+          source: 'file',
+          path: sanitizedPath,
+        };
+      }
+    } catch (err) {
+      console.error(`\n❌ ${err instanceof Error ? err.message : String(err)}`);
+      rl.close();
+      process.exit(1);
     }
     
-    // Save config
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    // Save config with restrictive permissions
+    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 });
     console.log(`\n✅ Config saved to ${CONFIG_PATH}\n`);
   }
   
@@ -149,13 +201,15 @@ async function main() {
     : 'weekly';
   
   const thresholdInput = await ask(rl, 'Minimum rewards to trigger compound [$0.50]: ');
-  const compoundThreshold = parseFloat(thresholdInput) || 0.50;
+  const thresholdNum = parseFloat(thresholdInput.replace(/[^0-9.]/g, ''));
+  const compoundThreshold = isNaN(thresholdNum) || thresholdNum < 0 ? 0.50 : thresholdNum;
   
   const autoInput = await ask(rl, 'Auto-compound when threshold reached? [Y/n]: ');
   const autoCompound = autoInput.toLowerCase() !== 'n';
   
   const depositInput = await ask(rl, 'Approximate deposit size in USDC [$100]: ');
-  const depositSize = parseFloat(depositInput) || 100;
+  const depositNum = parseFloat(depositInput.replace(/[^0-9.]/g, ''));
+  const depositSize = isNaN(depositNum) || depositNum < 0 ? 100 : depositNum;
   
   const prefs: Preferences = {
     reportFrequency,
@@ -163,7 +217,7 @@ async function main() {
     autoCompound,
   };
   
-  fs.writeFileSync(PREFS_PATH, JSON.stringify(prefs, null, 2));
+  fs.writeFileSync(PREFS_PATH, JSON.stringify(prefs, null, 2), { mode: 0o600 });
   console.log(`\n✅ Preferences saved to ${PREFS_PATH}\n`);
   
   // Generate HEARTBEAT.md entry
@@ -211,4 +265,7 @@ async function main() {
   rl.close();
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error('❌ Setup failed:', err instanceof Error ? err.message : String(err));
+  process.exit(1);
+});
