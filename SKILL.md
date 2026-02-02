@@ -1,11 +1,11 @@
 ---
-name: morpho-yield
+name: morpho-earn
 description: Earn yield on USDC by supplying to the Moonwell Flagship USDC vault on Morpho (Base). Use when depositing USDC, withdrawing from the vault, checking position/APY, or setting up wallet credentials for DeFi yield.
 version: 1.2.0
 metadata: {"clawdbot":{"emoji":"🌜🌛","category":"defi","requires":{"bins":["node"]}}}
 ---
 
-# Morpho Yield — Earn safe yield on your USDC
+# Morpho Earn — Earn safe yield on your USDC
 
 Earn yield on USDC via the Moonwell Flagship USDC vault on Base (Morpho protocol).
 
