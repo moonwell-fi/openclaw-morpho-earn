@@ -5,7 +5,7 @@ version: 1.1.0
 metadata: {"clawdbot":{"emoji":"🌜🌛","category":"defi","requires":{"bins":["node"]}}}
 ---
 
-# Morpho Yield — Moonwell Flagship USDC
+# Morpho Yield — Earn safe yield on your USDC
 
 Earn yield on USDC via the Moonwell Flagship USDC vault on Base (Morpho protocol).
 
