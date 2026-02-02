@@ -1,7 +1,7 @@
 ---
 name: morpho-yield
 description: Earn yield on USDC by supplying to the Moonwell Flagship USDC vault on Morpho (Base). Use when depositing USDC, withdrawing from the vault, checking position/APY, or setting up wallet credentials for DeFi yield.
-version: 1.1.0
+version: 1.2.0
 metadata: {"clawdbot":{"emoji":"🌜🌛","category":"defi","requires":{"bins":["node"]}}}
 ---
 
@@ -12,6 +12,28 @@ Earn yield on USDC via the Moonwell Flagship USDC vault on Base (Morpho protocol
 **Vault:** `0xc1256Ae5FF1cf2719D4937adb3bbCCab2E00A2Ca`
 **Chain:** Base (8453)
 **Asset:** USDC (`0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`)
+
+## Why This Vault?
+
+The Moonwell Flagship USDC vault is one of the **safest places to earn yield on Base**:
+
+- **Powers Coinbase** — Provides $20M+ liquidity to Coinbase's BTC/ETH borrow products
+- **Blue-chip collateral only** — Loans backed by ETH, cbETH, wstETH, cbBTC
+- **Conservative LTV ratios** — Healthy collateral requirements
+- **Isolated markets** — Risk is compartmentalized
+- **No rehypothecation** — Your USDC isn't lent recursively
+- **Battle-tested** — Morpho's codebase is <650 lines, immutable, extensively audited
+- **Multi-layer governance** — Moonwell DAO + Block Analitica/B.Protocol curators + Security Council
+
+### Current APY (~4.5-5%)
+
+| Component | APY | Source |
+|-----------|-----|--------|
+| Base yield | ~4% | Borrower interest |
+| Rewards | ~0.5-1% | WELL + MORPHO via Merkl |
+| **Total** | **~4.5-5%** | Sustainable, from real demand |
+
+Yields come from real borrowing demand, not unsustainable emissions. Check current APY with `npx tsx status.ts`.
 
 ## Quick Start
 
@@ -150,18 +172,32 @@ Preferences: `~/.config/morpho-yield/preferences.json`
 
 ## Security
 
-- Private keys are loaded at runtime from your chosen source
+⚠️ **This skill manages real funds. Review carefully:**
+
+- Private keys loaded at runtime from your chosen source
 - Keys never logged or written to disk by scripts
-- All transactions require explicit execution
+- All transactions simulated before execution
+- Contract addresses verified on each run
 - Scripts show transaction preview before sending
+
+### Recommended Setup
+
+1. **Dedicated wallet** — Create a hot wallet just for this skill
+2. **Limited funds** — Only deposit what you're comfortable having in a hot wallet
+3. **Secure key storage** — Use encrypted file or 1Password
+4. **Monitor activity** — Periodically check wallet transactions
+5. **Keep gas funded** — Maintain small ETH balance on Base for transactions
 
 ## Rewards
 
-The Moonwell vault earns additional rewards beyond base APY:
-- **MORPHO** — Morpho protocol incentives (~1.5% APR)
-- **WELL** — Moonwell governance token (~2% APR)
+The vault earns rewards beyond base APY via [Merkl](https://merkl.xyz):
+- **WELL** — Moonwell governance token incentives
+- **MORPHO** — Morpho protocol incentives
 
-Rewards are distributed via Merkl (updates every ~8 hours). The compound script handles claiming and reinvesting automatically.
+Rewards update approximately every 8 hours. The `compound.ts` script handles:
+1. Claiming rewards from Merkl distributor
+2. Swapping tokens to USDC via [Odos](https://odos.xyz) aggregator
+3. Depositing USDC back into the vault
 
 ## Error Handling
 
